@@ -1,0 +1,183 @@
+#######################################################
+###     Définition des constantes et variables      ###
+#######################################################
+
+var test = 0
+
+var V0 = 0
+var V1 = 50                  # puissance du moteur : 30 > x > 600
+var V2 = 150
+var V3 = 350
+var V4 = 400
+
+var LED_TIME = 20            # temps d'allumage des led du dessus : 1000 > x > 2
+var LED_FRONT = 0            # numéro de la LED du cercle, située à l'avant
+var LED_RIGHT = 2
+var LED_LEFT = 6
+var BRIGHT = 32              # intensité lumineuse des LED allumées : 32 > x > 0
+
+var PATH_RIGHT = 3
+# valeur définie pour indiquer que la direction de droite a été prise
+var PATH_LEFT = 1
+
+var COMM_TIME = 2000
+# valeur de rafraichissement de prox.comm.tx et prox.comm.rx
+var path[20]
+# liste contenant le chemin emprunté par le robot avec une case par intersection
+var pathLen = 0
+var pathCount = 0
+
+var ledActiv = -1
+var ledCount = 0
+var ledIntensity = BRIGHT
+var ledList[] = [0, 0, 0, 0, 0, 0, 0, 0]
+
+var commSend[6] = [1, 0, 1, 0, 1, 0]
+var commRcvd[6] = [-1, -1, -1, -1, -1, -1]
+var commCount = 0
+
+var stateW                      # état des roues du robot
+                                #       0 : inactives
+                                #       1 : avancent droit
+                                #       2 : tournent
+var stateL                      # état des LEDs
+                                #       0 : inactives
+                                #       1 : affichent les directions
+                                #       2 : affichent le chemin
+var stateT                      # état du processus de transmission du chemin pour robot n°2
+                                #       0 : inactif
+                                #      -1 : reception du test
+                                #      -2 : transmission du test
+                                #      -3 : (etat non utlilisé)
+                                #      -4 : actif
+                                #      -5 : terminé
+
+        ### Remise à zéro des fonctions du robot
+call sound.system(-1) # désactive du son
+call leds.top(0,0,0)
+call leds.bottom.left(0,0,0)
+call leds.bottom.right(0,0,0)
+call leds.circle(0,0,0,0,0,0,0,0)
+
+
+
+###########################################
+###     Sous-routines utilisées         ###
+###########################################
+
+###     LEDs    ###
+#   allume la LED ledActiv à l'intensité ledIntensité et met en route le timer qui l'appellera récursivement
+#   le timer diminue l'intensité de la lumière toutes les LED_TIME ms, ce qui donne un effet lumineux
+sub timer_led
+    timer.period[0] = LED_TIME
+    for ledCount in 0:7 do
+        if ledCount == ledActiv then
+            ledList[ledCount] = ledIntensity
+        else
+            ledList[ledCount] = 0
+        end
+    end
+    call leds.circle(ledList[0], ledList[1], ledList[2], ledList[3], ledList[4], ledList[5], ledList[6], ledList[7])
+
+#   gère l'allumage des LEDs lorsque le robot est dans le labyrinthe pour afficher la direction qu'il prend
+sub light_led_direction
+    stateL = 1
+    ledIntensity = BRIGHT
+    callsub timer_led
+
+#   gère l'allumage des LEDs lorsque le robot est sorti du labyrinthe pour afficher les direction qu'il a pris
+sub light_led_path
+    test  = 5
+    stateL = 2
+    if path[pathCount] != 0 and pathCount < pathLen then
+        test = 6
+        ledIntensity = BRIGHT
+        if path[pathCount] == PATH_RIGHT then
+            ledActiv = LED_RIGHT
+        elseif path[pathCount] == PATH_LEFT then
+            ledActiv = LED_LEFT
+        end
+        callsub timer_led
+    else
+        test = 6
+        stateL = 0
+        callsub out2
+    end
+
+sub transmission
+    test = 2
+    if stateT == -1 then
+        if commCount < 6 then
+            timer.period[0] = COMM_TIME
+            commRcvd[commCount] = prox.comm.rx
+        else
+            commCount = 0
+            stateT = -2
+        end
+    end
+    if stateT == -2 then
+        if commCount < 6 then
+            timer.period[0] = COMM_TIME
+            prox.comm.tx = commSend[commCount]
+        else
+            commCount = 0
+            stateT = -4
+        end
+    end
+    if stateT == -4 then
+        if commCount < pathLen then
+            timer.period[0] = COMM_TIME
+            prox.comm.tx = path[commCount]
+        else
+            stateT = 5
+            callsub light_led_path
+        end
+    end
+
+sub begin
+    test = 1
+    stateT = -1
+    prox.comm.tx = -1
+    prox.comm.enable(1)
+    callsub transmission
+
+
+
+###########################
+###     Evènements      ###
+###########################
+
+onevent button.forward
+    stateW = 0
+    stateL = 0
+    stateT = 0
+    pathLen = 0
+    pathCount = 0
+    ledCount = 0
+    commCount = 0
+    for i in 0:19 do
+        path[i] = 0
+    end
+    callsub begin
+
+onevent timer0
+    if stateW == 0 and stateL == 0 and stateT != 0 then
+    # transmission : changer valeur de prox.comm.tx toutes les 150ms
+        commCount++
+        callsub transmission
+    elseif stateW == 0 and stateL == 2 and stateT == 0 then
+    # chemin : diminuer l'intensité ou montrer la flèche directionelle suivante
+        if ledIntensity > 0 then
+            ledIntensity -= 1
+            callsub timer_led
+        else
+            pathCount++
+            callsub light_led_path
+        end
+    elseif stateW != 0 and stateL == 1 and stateT == 0 then
+    # direction : diminuer l'intensité
+        if ledIntensity > 0 then
+            ledIntensity -= 1
+            callsub timer_led
+        end
+    end
